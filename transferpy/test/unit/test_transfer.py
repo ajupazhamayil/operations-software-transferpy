@@ -1,12 +1,13 @@
 """Tests for transfer.py class."""
+import os
 import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
-from transferpy.transfer import option_parse
 from transferpy.Transferer import Transferer
-
 from transferpy.test.utils import hide_stderr
+from transferpy.transfer import option_parse, \
+    assign_default_options, configparser, parse_configurations
 
 
 class TestTransferer(unittest.TestCase):
@@ -302,3 +303,97 @@ class TestArgumentParsing(unittest.TestCase):
             = self.option_parse(no_encrypt_test_args)
         self.assertTrue(other_options['compress'])
         self.assertFalse(other_options['encrypt'])
+
+    def test_assign_default_options(self):
+        """Test assign_default_options function"""
+        default_options = assign_default_options({})
+        self.assertEqual(default_options['port'], 0)
+        self.assertEqual(default_options['transfer_type'], 'file')
+        self.assertTrue(default_options['compress'])
+        self.assertTrue(default_options['encrypt'])
+        self.assertTrue(default_options['checksum'])
+        self.assertFalse(default_options['verbose'])
+        self.assertFalse(default_options['stop_slave'])
+        # Check whether the values are getting accepted
+        default_options = assign_default_options(
+            {'port': 4444, 'transfer_type': 'xtrabackup',
+             'compress': False, 'encrypt': False, 'checksum': False,
+             'stop_slave': True, 'verbose': True
+             })
+        self.assertEqual(default_options['port'], 4444)
+        self.assertEqual(default_options['transfer_type'], 'xtrabackup')
+        self.assertFalse(default_options['compress'])
+        self.assertFalse(default_options['encrypt'])
+        self.assertFalse(default_options['checksum'])
+        self.assertTrue(default_options['verbose'])
+        self.assertTrue(default_options['stop_slave'])
+
+    def test_parse_configurations(self):
+        """test parse configuration file"""
+        config_file = '/tmp/tmp_transferpy.conf'
+        config = configparser.ConfigParser()
+        config['DEFAULT'] = {'port': 4444, 'transfer_type': 'xtrabackup',
+                             'compress': False, 'encrypt': False, 'checksum': False,
+                             'stop_slave': True, 'verbose': True}
+        # Write the config options to a file and use it as transferpy config file
+        with open(config_file, 'w') as configfile:
+            config.write(configfile)
+        conf_args = dict(parse_configurations(config_file))
+        os.remove(config_file)
+        self.assertEqual(conf_args['port'], '4444')
+        self.assertEqual(conf_args['transfer_type'], 'xtrabackup')
+        self.assertEqual(conf_args['compress'], 'False')
+        self.assertEqual(conf_args['encrypt'], 'False')
+        self.assertEqual(conf_args['checksum'], 'False')
+        self.assertEqual(conf_args['stop_slave'], 'True')
+        self.assertEqual(conf_args['verbose'], 'True')
+
+    def test_winner_among_cli_and_config(self):
+        """Test the context of disagreement between command line arguments
+        and configuration file arguments: command line arguments should get
+        first preference."""
+        config_file = '/tmp/tmp_transferpy.conf'
+        config = configparser.ConfigParser()
+        config['DEFAULT'] = {'port': 4444, 'transfer_type': 'file',
+                             'compress': True, 'encrypt': True, 'checksum': True,
+                             'stop_slave': False, 'verbose': False}
+        # Write the config options to a file and use it as transferpy config file
+        with open(config_file, 'w') as configfile:
+            config.write(configfile)
+        # Give command line arguments opposite to the config file
+        args = ['transfer', 'source:path', 'target:path',
+                '--port', 0, '--type', 'xtrabackup',
+                '--no-compress', '--no-encrypt', '--no-checksum',
+                '--stop-slave', '--verbose']
+        (source_host, source_path, target_hosts, target_paths, other_options) = \
+            self.option_parse(args)
+        os.remove(config_file)
+        # Command line arguments should get reflected
+        self.assertEqual(other_options['port'], 0)
+        self.assertEqual(other_options['type'], 'xtrabackup')
+        self.assertFalse(other_options['compress'])
+        self.assertFalse(other_options['encrypt'])
+        self.assertFalse(other_options['checksum'])
+        self.assertTrue(other_options['stop_slave'])
+        self.assertTrue(other_options['verbose'])
+
+    def test_missing_argument(self):
+        """Test missing argument"""
+        config_file = '/tmp/tmp_transferpy.conf'
+        config = configparser.ConfigParser()
+        config['DEFAULT'] = {'port': 4444, 'transfer_type': 'file',
+                             'compress': True, 'encrypt': True, 'checksum': True,
+                             'stop_slave': False}
+        # Write the config options except verbose
+        with open(config_file, 'w') as configfile:
+            config.write(configfile)
+        # Give command line arguments without --verbose option
+        args = ['transfer', 'source:path', 'target:path',
+                '--port', 0, '--type', 'xtrabackup',
+                '--no-compress', '--no-encrypt', '--no-checksum',
+                '--stop-slave']
+        (source_host, source_path, target_hosts, target_paths, other_options) = \
+            self.option_parse(args)
+        os.remove(config_file)
+        # The verbose is not mentioned anywhere, so default False should be taken
+        self.assertFalse(other_options['verbose'])
